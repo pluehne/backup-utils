@@ -144,6 +144,13 @@ else
   # In noncluster setups, the primary instance owns all repository networks, so all network paths
   # are to be synchronized to the primary instance.
   cp "$tmp_list" "$tempdir/git-server-primary.rsync"
+
+  # For benchmarking purposes, simulate a setup with a configurable number of replicas
+  if [[ "$SIMULATE_REPLICAS" =~ ^[0-9]+$ ]]; then
+    for ((i = 1; i <= SIMULATE_REPLICAS; i++)); do
+      cp "$tmp_list" "$tempdir/git-server-replica-$i.rsync"
+    done
+  fi
 fi
 
 if [ -z "$(find "$tempdir" -maxdepth 1 -name '*.rsync')" ]; then
@@ -154,6 +161,7 @@ fi
 # rsync all the repository networks to the git server where they belong.
 # One rsync invocation per server available.
 bm_start "$(basename $0) - Restoring repository networks"
+rsync_descriptions=()
 rsync_commands=()
 for file_list in $tempdir/git-server-*.rsync; do
   if $CLUSTER; then
@@ -162,6 +170,7 @@ for file_list in $tempdir/git-server-*.rsync; do
     server=$host
   fi
 
+  rsync_descriptions+=("from $(basename $file_list .rsync) to $server")
   rsync_commands+=("
     if [ -n \"$GHE_VERBOSE\" ]; then
       echo \"* Transferring repository networks to $server ($file_list) ...\" 1>&3
@@ -180,8 +189,10 @@ done
 if [ "$GHE_PARALLEL_ENABLED" = "yes" ]; then
   "$GHE_PARALLEL_COMMAND" "${GHE_PARALLEL_RSYNC_COMMAND_OPTIONS[@]}" -- "${rsync_commands[@]}"
 else
-  for c in "${rsync_commands[@]}"; do
-    eval "$c"
+  for c in "${!rsync_commands[@]}"; do
+    bm_start "$(basename $0) - Restoring repository networks ${rsync_descriptions[c]}"
+    eval "${rsync_commands[c]}"
+    bm_end "$(basename $0) - Restoring repository networks ${rsync_descriptions[c]}"
   done
 fi
 
